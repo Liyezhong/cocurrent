@@ -1,17 +1,12 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
-#include <QThreadPool>
-#include <QtConcurrent>
 #include <QTimer>
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
-    ui(new Ui::MainWindow),
-    i(0)
+    ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-    pool.setMaxThreadCount(1);
-    pool.setExpiryTimeout(-1);
 //    queue[0].enqueue(1);
 //    queue[0].enqueue(2);
 //    queue[0].enqueue(3);
@@ -38,15 +33,15 @@ MainWindow::~MainWindow()
 void MainWindow::on_pushButton_clicked()
 {
 
-    QFuture<void> future = QtConcurrent::run(&pool, [&]() {
-        // Code in this block will run in another thread
-                    qDebug() << "__ali__ start";
+//    QFuture<void> future = QtConcurrent::run(&pool, [&]() {
+//        // Code in this block will run in another thread
+//                    qDebug() << "__ali__ start";
 
-        qDebug() << "__ali__ end";
+//        qDebug() << "__ali__ end";
 
-    });
+//    });
 
-    watcher.setFuture(future);
+//    watcher.setFuture(future);
 }
 
 
@@ -64,7 +59,7 @@ void MainWindow::handleFinished()
 }
 
 
-void MainWindow::ExecuteCmd(Cmd &cmd)
+void MainWindow::ExecuteCmd(Cmd *cmd)
 {
 //
         qDebug() << "...execute cmd...";
@@ -73,7 +68,7 @@ void MainWindow::ExecuteCmd(Cmd &cmd)
 void MainWindow::handleTimer()
 {
 //
-
+#if 1
         Cmd *cmd = new Cmd;
         static int a;
         cmd->value = a++;
@@ -81,16 +76,21 @@ void MainWindow::handleTimer()
         b = !b;
         cmd->type = (int)b;
          qDebug() << "...handle timer... " << cmd->value;
-
-         queue[cmd->type].enqueue(*cmd);
-         QFuture<void> future = QtConcurrent::run(&pool, [&]() {
-             // Code in this block will run in another thread
-//             qDebug() << "cmd start";
-             ExecuteCmd(*cmd);
-//             qDebug() << "cmd end";
-//             qDebug() << "__ali__ end queue[0].size: " << queue[0].size();
-//             queue[cmd->type].removeOne(*cmd);
-             qDebug() << "queue[cmd->type].indexOf(*cmd): " << queue[cmd->type].indexOf(*cmd);
+//         cmdQueueManage.cmdQueue[cmd->type].
+         cmdQueueManage.cmdQueue[cmd->type].run([&]() -> void {
+             ExecuteCmd(cmd);
          });
 
+//         queue[cmd->type].enqueue(*cmd);
+
+//         QFuture<void> future = QtConcurrent::run(&pool, [&]() {
+//             // Code in this block will run in another thread
+////             qDebug() << "cmd start";
+//             ExecuteCmd(*cmd);
+////             qDebug() << "cmd end";
+////             qDebug() << "__ali__ end queue[0].size: " << queue[0].size();
+////             queue[cmd->type].removeOne(*cmd);
+//             qDebug() << "queue[cmd->type].indexOf(*cmd): " << queue[cmd->type].indexOf(*cmd);
+//         });
+#endif
 }
