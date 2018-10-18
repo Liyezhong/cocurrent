@@ -7,12 +7,20 @@
 #include <QtConcurrent>
 #include <QFutureWatcher>
 #include <functional>
+#include <QMutex>
 
 namespace Ui {
 class MainWindow;
 }
 
 class Cmd {
+
+public:
+    QString GetSender() {return (type? "A": "B");}
+    bool GetResponse()
+    {
+        return (value / 2);
+    }
 public:
     int type;
     int value;
@@ -20,41 +28,95 @@ public:
 };
 
 typedef QString VTP;
+typedef QQueue<Cmd*> CmdQueue;
+class CmdQueueManage;
 
-template<typename CMD>
 class CmdQueueNode {
-//#define VTP QString
+friend class CmdQueueManage;
 public:
     CmdQueueNode()
     {
         pool.setMaxThreadCount(1);
         pool.setExpiryTimeout(-1);
-        qDebug() << "__ali__ cmd queue node";
     }
     ~CmdQueueNode()
     {
         pool.clear();
     }
 public:
-    template <typename Function>
-    void run(Function const &fn)
+    template <typename Function1, typename Function2>
+    void run(Cmd *cmd, Function1 const &Execute, Function2 const &Result)
     {
-        QFuture<void> future = QtConcurrent::run(&pool, fn);
+        QtConcurrent::run(&pool, [&]() -> void {
+          Execute();
+          cmd;
+          cmd->GetSender();
+          if (cmd->GetResponse())
+            Result();
+          manage->dequeue(cmd);
+        });
     }
 
     VTP getVTP() {return vtpId;}
 
 private:
     VTP vtpId;
-    QQueue<CMD> queue;
+    CmdQueue queue;
     QThreadPool pool;
-    QFutureWatcher<void> watcher;
+//    QFutureWatcher<void> watcher;
+    CmdQueueManage *manage;
 };
 
-template<typename CMD>
 class CmdQueueManage {
+    friend class CmdQueueNode;
 public:
-    CmdQueueNode<CMD> cmdQueue[2];
+    CmdQueueManage()
+    {
+        cmdq[0].manage = this;
+        cmdq[1].manage = this;
+    }
+    template <typename Function1, typename Function2>
+    void asyncRun(Cmd *cmd, Function1 const &Execute, Function2 const &Result)
+    {
+        if (isDepdend(cmd) == true) {
+           QtConcurrent::run(Execute);
+           return;
+        }
+        enqueue(cmd);
+        cmdq[cmd->type].run(cmd, Execute, Result);
+    }
+private:
+    void enqueue(Cmd *cmd)
+    {
+        lock.lock();
+        totalq.enqueue(cmd);
+        cmdq[cmd->type].queue.enqueue(cmd);
+        lock.unlock();
+    }
+    void dequeue(Cmd *cmd)
+    {
+        lock.lock();
+        if (!totalq.isEmpty()) {
+            qDebug() << "totalq.size(): <<<" << totalq.size();
+            totalq.removeOne(cmd);
+            qDebug() << "totalq.size(): >>>" << totalq.size();
+        }
+        if (!cmdq[cmd->type].queue.isEmpty()) {
+            qDebug() << "cmdq[cmd->type].queue.size(): <<<" << cmdq[cmd->type].queue.size();
+            cmdq[cmd->type].queue.removeOne(cmd);
+            qDebug() << "cmdq[cmd->type].queue.size(): >>>" << cmdq[cmd->type].queue.size();
+        }
+        lock.unlock();
+    }
+    bool isDepdend(Cmd *cmd)
+    {
+        qDebug() << "is depend: " << cmd->value;
+        return false;
+    }
+private:
+    CmdQueueNode cmdq[2];
+    CmdQueue totalq;
+    QMutex   lock;
 };
 
 class MainWindow : public QMainWindow
@@ -76,7 +138,8 @@ private slots:
 private:
     Ui::MainWindow *ui;
 
-    CmdQueueManage<Cmd> cmdQueueManage;
+    int i;
+    CmdQueueManage cmdQueueManage;
 };
 
 #endif // MAINWINDOW_H
