@@ -10,6 +10,7 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
     i = 0;
+
 #if 1
 //    QSharedPointer<QTimer> tr = QSharedPointer<QTimer>(new QTimer(this), &QObject::deleteLater);
 ////    QSharedPointer<QTimer> tr = QSharedPointer<QTimer>(new QTimer(this));
@@ -59,6 +60,7 @@ void MainWindow::ExecuteCmd(Cmd *cmd)
 void MainWindow::handleTimer()
 {
         Cmd *cmd = new Cmd;
+//        QSharedPointer<Cmd> cmd1(cmd);
         static int a;
         cmd->value = a++;
         static bool b = false;

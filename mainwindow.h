@@ -19,7 +19,7 @@ public:
     QString GetSender() {return (type? "A": "B");}
     bool GetResponse()
     {
-        return (value / 2);
+        return (value % 2);
     }
 public:
     int type;
@@ -27,8 +27,17 @@ public:
     QString name;
 };
 
+struct CmdStatus {
+    CmdStatus(Cmd *_cmd):cmd(_cmd),isFinish(false),isDepend(false)
+    {
+    }
+    Cmd *cmd;
+    bool isFinish;
+    bool isDepend;
+};
+
 typedef QString VTP;
-typedef QQueue<Cmd*> CmdQueue;
+typedef QQueue<CmdStatus*> CmdQueue;
 class CmdQueueManage;
 
 class CmdQueueNode {
@@ -45,15 +54,26 @@ public:
     }
 public:
     template <typename Function1, typename Function2>
-    void run(Cmd *cmd, Function1 const &Execute, Function2 const &Result)
+    void run(CmdStatus *cmdStatus, Function1 const &Execute, Function2 const &Result)
     {
         QtConcurrent::run(&pool, [&]() -> void {
           Execute();
-          cmd;
-          cmd->GetSender();
-          if (cmd->GetResponse())
-            Result();
-          manage->dequeue(cmd);
+
+          manage->lock();
+          cmdStatus->isFinish = true;
+
+          for (int i = 0; i < manage->totalq.size(); i++) {
+              CmdStatus *_cmdStatus = manage->totalq.at(i);
+              if (_cmdStatus->isFinish == true) {
+                  if (_cmdStatus->cmd->GetResponse())
+                      Result();
+                   manage->dequeue(_cmdStatus);
+              } else {
+                    break;
+              }
+          }
+
+          manage->unlock();
         });
     }
 
@@ -78,45 +98,67 @@ public:
     template <typename Function1, typename Function2>
     void asyncRun(Cmd *cmd, Function1 const &Execute, Function2 const &Result)
     {
-        if (isDepdend(cmd) == true) {
+        CmdStatus *status = new CmdStatus(cmd);
+        if (isDepdend(status) == true) {
            QtConcurrent::run(Execute);
+           delete status;
            return;
-        }
-        enqueue(cmd);
-        cmdq[cmd->type].run(cmd, Execute, Result);
+        }        
+        lock();
+        enqueue(status);
+        unlock();
+        cmdq[cmd->type].run(status, Execute, Result);
     }
 private:
-    void enqueue(Cmd *cmd)
+    void enqueue(CmdStatus *status)
     {
-        lock.lock();
-        totalq.enqueue(cmd);
-        cmdq[cmd->type].queue.enqueue(cmd);
-        lock.unlock();
+        totalq.enqueue(status);
+        cmdq[status->cmd->type].queue.enqueue(status);
     }
-    void dequeue(Cmd *cmd)
+    void dequeue(CmdStatus *cmdStatus)
     {
-        lock.lock();
-        if (!totalq.isEmpty()) {
-            qDebug() << "totalq.size(): <<<" << totalq.size();
-            totalq.removeOne(cmd);
-            qDebug() << "totalq.size(): >>>" << totalq.size();
-        }
-        if (!cmdq[cmd->type].queue.isEmpty()) {
-            qDebug() << "cmdq[cmd->type].queue.size(): <<<" << cmdq[cmd->type].queue.size();
-            cmdq[cmd->type].queue.removeOne(cmd);
-            qDebug() << "cmdq[cmd->type].queue.size(): >>>" << cmdq[cmd->type].queue.size();
-        }
-        lock.unlock();
+        totalq.removeOne(cmdStatus);
+        cmdq[cmdStatus->cmd->type].queue.removeOne(cmdStatus);
+        delete cmdStatus;
+//        for (int i = 0; i < totalq.size(); i++) {
+//            CmdStatus *status = totalq.at(i);
+//            if (status->cmd == cmd) {
+//                totalq.removeOne(status);
+//                delete status;
+//                return;
+//            }
+//        }
+//        for (int i = 0; i < cmdq[cmd->type].queue.size(); i++) {
+//            CmdStatus *status = totalq.at(i);
+//            if (status->cmd == cmd) {
+//                cmdq[cmd->type].queue.removeOne(status);
+//                delete status;
+//                return;
+//            }
+//        }
     }
-    bool isDepdend(Cmd *cmd)
+    bool isDepdend(CmdStatus *cmdStatus)
     {
-        qDebug() << "is depend: " << cmd->value;
+        qDebug() << "is depend: " << cmdStatus->isDepend;
         return false;
+    }
+
+    inline CmdStatus *totalq_head()
+    {
+        return totalq.head();
+    }
+    inline void lock()
+    {
+        _lock.lock();
+    }
+    inline void unlock()
+    {
+        _lock.unlock();
     }
 private:
     CmdQueueNode cmdq[2];
     CmdQueue totalq;
-    QMutex   lock;
+    QMutex   _lock;
 };
 
 class MainWindow : public QMainWindow
