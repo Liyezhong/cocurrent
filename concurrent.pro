@@ -34,4 +34,4 @@ FORMS += \
         mainwindow.ui
 
 #CONFIG += C++1z
-QMAKE_CXXFLAGS += -std=c++1z
+QMAKE_CXXFLAGS += -std=c++1z -fno-stack-protector

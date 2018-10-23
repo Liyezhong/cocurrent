@@ -8,6 +8,8 @@
 #include <QFutureWatcher>
 #include <functional>
 #include <QMutex>
+#include <QSemaphore>
+#include <QEventLoop>
 
 namespace Ui {
 class MainWindow;
@@ -19,16 +21,19 @@ public:
     QString GetSender() {return (type? "A": "B");}
     bool GetResponse()
     {
+        return true;
         return (value % 2);
     }
 public:
     int type;
     int value;
     QString name;
+    QSemaphore sem;
+    QEventLoop ev;
 };
 
 struct CmdStatus {
-    CmdStatus(Cmd *_cmd):cmd(_cmd),isFinish(false),isDepend(false)
+    CmdStatus(Cmd *_cmd):cmd(_cmd),isFinish(false),isDepend(true)
     {
     }
     Cmd *cmd;
@@ -54,28 +59,7 @@ public:
     }
 public:
     template <typename Function1, typename Function2>
-    void run(CmdStatus *cmdStatus, Function1 const &Execute, Function2 const &Result)
-    {
-        QtConcurrent::run(&pool, [&]() -> void {
-          Execute();
-
-          manage->lock();
-          cmdStatus->isFinish = true;
-
-          for (int i = 0; i < manage->totalq.size(); i++) {
-              CmdStatus *_cmdStatus = manage->totalq.at(i);
-              if (_cmdStatus->isFinish == true) {
-                  if (_cmdStatus->cmd->GetResponse())
-                      Result();
-                   manage->dequeue(_cmdStatus);
-              } else {
-                    break;
-              }
-          }
-
-          manage->unlock();
-        });
-    }
+    void run(CmdStatus *__cmdStatus, Function1 const &Execute, Function2 const &Result);
 
     VTP getVTP() {return vtpId;}
 
@@ -85,6 +69,7 @@ private:
     QThreadPool pool;
 //    QFutureWatcher<void> watcher;
     CmdQueueManage *manage;
+    QMutex lock;
 };
 
 class CmdQueueManage {
@@ -96,53 +81,23 @@ public:
         cmdq[1].manage = this;
     }
     template <typename Function1, typename Function2>
-    void asyncRun(Cmd *cmd, Function1 const &Execute, Function2 const &Result)
-    {
-        CmdStatus *status = new CmdStatus(cmd);
-        if (isDepdend(status) == true) {
-           QtConcurrent::run(Execute);
-           delete status;
-           return;
-        }        
-        lock();
-        enqueue(status);
-        unlock();
-        cmdq[cmd->type].run(status, Execute, Result);
-    }
+    void asyncRun(Cmd *cmd, Function1 const &Execute, Function2 const &Result);
+
 private:
-    void enqueue(CmdStatus *status)
+    void enqueue(CmdStatus *cmdStatus)
     {
-        totalq.enqueue(status);
-        cmdq[status->cmd->type].queue.enqueue(status);
+        totalq.enqueue(cmdStatus);
+        cmdq[cmdStatus->cmd->type].queue.enqueue(cmdStatus);
+        qDebug() << "enqueue totalq size: " << totalq.size();
     }
     void dequeue(CmdStatus *cmdStatus)
     {
         totalq.removeOne(cmdStatus);
         cmdq[cmdStatus->cmd->type].queue.removeOne(cmdStatus);
+        delete cmdStatus->cmd;
         delete cmdStatus;
-//        for (int i = 0; i < totalq.size(); i++) {
-//            CmdStatus *status = totalq.at(i);
-//            if (status->cmd == cmd) {
-//                totalq.removeOne(status);
-//                delete status;
-//                return;
-//            }
-//        }
-//        for (int i = 0; i < cmdq[cmd->type].queue.size(); i++) {
-//            CmdStatus *status = totalq.at(i);
-//            if (status->cmd == cmd) {
-//                cmdq[cmd->type].queue.removeOne(status);
-//                delete status;
-//                return;
-//            }
-//        }
+        qDebug() << "dequeue totalq size: " << totalq.size();
     }
-    bool isDepdend(CmdStatus *cmdStatus)
-    {
-        qDebug() << "is depend: " << cmdStatus->isDepend;
-        return false;
-    }
-
     inline CmdStatus *totalq_head()
     {
         return totalq.head();
@@ -160,6 +115,54 @@ private:
     CmdQueue totalq;
     QMutex   _lock;
 };
+
+template <typename Function1, typename Function2>
+void CmdQueueNode::run(CmdStatus *__cmdStatus, Function1 const &Execute, Function2 const &Result)
+{
+    QtConcurrent::run(&pool, [&](CmdStatus *cmdStatus) -> void {
+      lock.lock();
+      Execute(cmdStatus->cmd);
+
+      manage->lock();
+      cmdStatus->isFinish = true;
+      if (cmdStatus->cmd->GetResponse() == false) {
+          manage->dequeue(cmdStatus);
+      }
+// total queue process
+#define TOTAL_QUEUE_DEF
+#ifdef TOTAL_QUEUE_DEF
+      for (CmdStatus *_cmdStatus : manage->totalq) {
+          if (_cmdStatus->isFinish == true) {
+              Result(_cmdStatus->cmd);
+              manage->dequeue(_cmdStatus);
+          } else {
+                break;
+          }
+      }
+#endif
+
+      manage->unlock();
+      lock.unlock();
+    }, __cmdStatus);
+}
+
+template <typename Function1, typename Function2>
+void CmdQueueManage::asyncRun(Cmd *cmd, Function1 const &Execute, Function2 const &Result)
+{
+    CmdStatus *cmdStatus = new CmdStatus(cmd);
+    if (cmdStatus->isDepend == false) {
+       QtConcurrent::run(QThreadPool::globalInstance(), [&](CmdStatus *_cmdStatus) -> void {
+           Execute(_cmdStatus->cmd);
+           delete _cmdStatus;
+       }, cmdStatus);
+
+       return;
+    }
+    lock();
+    enqueue(cmdStatus);
+    unlock();
+    cmdq[cmd->type].run(cmdStatus, Execute, Result);
+}
 
 class MainWindow : public QMainWindow
 {
